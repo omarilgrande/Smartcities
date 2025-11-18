@@ -11,7 +11,7 @@ class Image(Base):
     date = mapped_column(String(20),nullable=False)
 
     def __str__(self):
-        return f"{self.idi}:{self.titre},{self.genre.genre}"
+        return f"{self.idi}:{self.path},{self.date}"
     
 class Battrie(Base):
     __tablename__ = "Battrie"
