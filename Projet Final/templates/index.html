@@ -1,44 +1,79 @@
+<!-- ============================
+     FICHIER : templates/index.html
+     Rôle : Interface web qui affiche toutes les images trouvées dans static/images/
+============================ -->
+
 <!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Explorateur d'images</title>
+
+  <!-- Importation de TailwindCSS (framework de design moderne) -->
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
+
+<!-- Corps de la page -->
+<!-- flex = disposition horizontale (sidebar + contenu principal) -->
+<!-- h-screen = pleine hauteur, bg-gray-100 = fond gris clair -->
 <body class="flex h-screen bg-gray-100">
 
-  <!-- 🧭 Barre latérale -->
+  <!-- ============================
+       BARRE LATÉRALE GAUCHE (PARAMÈTRES)
+  ============================ -->
   <div class="w-64 bg-slate-800 text-white flex flex-col p-4 space-y-4">
+    <!-- Titre de la barre latérale -->
     <h2 class="text-xl font-bold mb-4">Paramètres</h2>
 
+    <!-- Deux boutons -->
     <button class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded">Bouton 1</button>
     <button class="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded">Bouton 2</button>
 
+    <!-- Slider pour zoomer -->
     <label class="mt-4">Zoom</label>
     <input type="range" min="50" max="200" value="100" id="zoomSlider" class="w-full">
   </div>
 
-  <!-- 🖼️ Zone d'affichage des images -->
+  <!-- ============================
+       CONTENU PRINCIPAL (GALERIE D’IMAGES)
+  ============================ -->
+  <!-- flex-1 = prend tout l’espace restant -->
+  <!-- overflow-y-auto = permet de scroller verticalement si trop d’images -->
   <div class="flex-1 overflow-y-auto p-6">
+
+    <!-- Titre -->
     <h1 class="text-2xl font-semibold mb-4">Images stockées</h1>
 
+    <!-- Grille pour afficher les images -->
+    <!-- grid-cols-3 = 3 colonnes, gap-4 = espace entre les éléments -->
     <div id="gallery" class="grid grid-cols-3 gap-4">
+
+      <!-- Boucle Jinja2 : Flask remplace cette partie par une <img> pour chaque image -->
       {% for img in images %}
       <div class="bg-white rounded-lg shadow-md p-2 flex items-center justify-center">
+        <!-- url_for('static', filename=img) = construit l’URL correcte vers le fichier dans static/ -->
         <img src="{{ url_for('static', filename=img) }}" class="gallery-image rounded max-h-60 object-contain">
       </div>
       {% endfor %}
+
     </div>
   </div>
 
-  <!-- 🔧 Script pour le zoom -->
+  <!-- ============================
+       SCRIPT JAVASCRIPT : GESTION DU ZOOM
+  ============================ -->
   <script>
+    // On récupère le slider HTML et toutes les images de la galerie
     const zoomSlider = document.getElementById('zoomSlider');
     const images = document.querySelectorAll('.gallery-image');
 
+    // Quand la valeur du slider change (événement "input")
     zoomSlider.addEventListener('input', () => {
+      // On calcule le niveau de zoom (100 = normal, 200 = x2, etc.)
       const zoom = zoomSlider.value / 100;
+
+      // On applique un "scale" (mise à l’échelle) à chaque image
       images.forEach(img => {
         img.style.transform = `scale(${zoom})`;
       });
