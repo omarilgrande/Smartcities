@@ -1,42 +1,48 @@
 # ============================
 # FICHIER : appli.py
-# Rôle : Serveur Flask qui affiche toutes les images du dossier static/images
+# Rôle : Serveur Flask avec interface pour configurer un ESP32
 # ============================
 
-# Importation des modules nécessaires
-from flask import Flask, render_template, url_for  # Flask = framework web, render_template = affiche HTML, url_for = gère les chemins
-import os  # os permet de manipuler le système de fichiers (accéder aux dossiers, lister les fichiers, etc.)
+from flask import Flask, render_template, request, redirect, url_for
+import os
 
-# Création de l'application Flask
 app = Flask(__name__)
 
-# ============================
-# ROUTE PRINCIPALE "/"
-# Cette route est appelée quand on visite http://127.0.0.1:5000/
-# ============================
+# Route principale : affichage des images + paramètres
 @app.route('/')
 def index():
-    # On définit le chemin vers le dossier qui contient les images
-    # app.static_folder = le dossier "static" par défaut dans Flask
+    # Récupération automatique des images
     image_folder = os.path.join(app.static_folder, "images")
-
-    # On crée une liste vide qui contiendra les chemins des images
-    images = []
-
-    # On parcourt tous les fichiers présents dans static/images/
-    for file in os.listdir(image_folder):
-        # On ne garde que les fichiers d'images selon leur extension
-        if file.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp")):
-            # On ajoute le chemin relatif (ex: "images/photo1.png") dans la liste
-            images.append("images/" + file)
-
-    # On renvoie la page HTML index.html
-    # On lui passe la liste "images" pour qu'elle affiche toutes les images trouvées
+    images = [f"images/{file}" for file in os.listdir(image_folder)
+              if file.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".webp"))]
+    
     return render_template("index.html", images=images)
 
 # ============================
-# Lancement du serveur Flask
+# Route pour recevoir les paramètres ESP32 depuis le formulaire
 # ============================
+@app.route('/update_params', methods=['POST'])
+def update_params():
+    # On récupère les valeurs envoyées depuis le formulaire HTML
+    ssid = request.form.get('ssid')
+    password = request.form.get('password')
+    freq = request.form.get('freq')
+    seuil_temp = request.form.get('seuil_temp')
+    seuil_hum = request.form.get('seuil_hum')
+
+    # Pour le moment, on affiche dans la console (plus tard : envoi à l’ESP32)
+    print("=== PARAMÈTRES REÇUS ===")
+    print(f"SSID WiFi : {ssid}")
+    print(f"Mot de passe : {password}")
+    print(f"Fréquence d’envoi (s) : {freq}")
+    print(f"Seuil température : {seuil_temp}")
+    print(f"Seuil humidité : {seuil_hum}")
+    print("=========================")
+
+    # Tu pourrais ici ajouter un code pour envoyer ces paramètres à l’ESP32
+    # via requête HTTP, MQTT ou websocket selon ton setup
+
+    return redirect(url_for('index'))  # Retour à la page principale
+
 if __name__ == "__main__":
-    # debug=True : recharge automatiquement l'app en cas de modification + affiche les erreurs
     app.run(debug=True)
