@@ -3,66 +3,46 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SmartCities Dashboard</title>
+  <title>Explorateur d'images</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    .sidebar {
-      width: 250px;
-      background-color: #1e293b;
-      color: white;
-    }
-  </style>
 </head>
 <body class="flex h-screen bg-gray-100">
 
   <!-- 🧭 Barre latérale -->
-  <div class="sidebar flex flex-col p-4 space-y-6">
+  <div class="w-64 bg-slate-800 text-white flex flex-col p-4 space-y-4">
     <h2 class="text-xl font-bold mb-4">Paramètres</h2>
 
-    <button class="bg-blue-500 hover:bg-blue-600 text-white px-3 py-2 rounded">Bouton 1</button>
-    <button class="bg-green-500 hover:bg-green-600 text-white px-3 py-2 rounded">Bouton 2</button>
+    <button class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded">Bouton 1</button>
+    <button class="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded">Bouton 2</button>
 
-    <label class="block mt-4">Slider 1</label>
-    <input type="range" min="0" max="100" value="50" class="w-full">
-
-    <label class="block mt-4">Slider 2</label>
-    <input type="range" min="0" max="100" value="25" class="w-full">
+    <label class="mt-4">Zoom</label>
+    <input type="range" min="50" max="200" value="100" id="zoomSlider" class="w-full">
   </div>
 
-  <!-- 🖼️ Zone centrale -->
-  <div class="flex-1 p-6 flex flex-col items-center justify-center">
-    <div class="relative w-[600px] h-[400px] overflow-hidden rounded-xl shadow-lg">
-      <div id="slider" class="flex transition-transform duration-700 ease-in-out">
-        {% for img in images %}
-        <img src="{{ url_for('static', filename=img) }}" class="w-[600px] h-[400px] object-cover">
-        {% endfor %}
-      </div>
+  <!-- 🖼️ Zone d'affichage des images -->
+  <div class="flex-1 overflow-y-auto p-6">
+    <h1 class="text-2xl font-semibold mb-4">Images stockées</h1>
 
-      <!-- Flèches -->
-      <button onclick="prevSlide()" class="absolute left-2 top-1/2 -translate-y-1/2 bg-black/50 text-white px-2 py-1 rounded-full">‹</button>
-      <button onclick="nextSlide()" class="absolute right-2 top-1/2 -translate-y-1/2 bg-black/50 text-white px-2 py-1 rounded-full">›</button>
+    <div id="gallery" class="grid grid-cols-3 gap-4">
+      {% for img in images %}
+      <div class="bg-white rounded-lg shadow-md p-2 flex items-center justify-center">
+        <img src="{{ url_for('static', filename=img) }}" class="gallery-image rounded max-h-60 object-contain">
+      </div>
+      {% endfor %}
     </div>
   </div>
 
-  <!-- 🎞️ Script du slider -->
+  <!-- 🔧 Script pour le zoom -->
   <script>
-    let currentSlide = 0;
-    const slider = document.getElementById('slider');
-    const totalSlides = slider.children.length;
+    const zoomSlider = document.getElementById('zoomSlider');
+    const images = document.querySelectorAll('.gallery-image');
 
-    function updateSlide() {
-      slider.style.transform = `translateX(-${currentSlide * 600}px)`;
-    }
-
-    function nextSlide() {
-      currentSlide = (currentSlide + 1) % totalSlides;
-      updateSlide();
-    }
-
-    function prevSlide() {
-      currentSlide = (currentSlide - 1 + totalSlides) % totalSlides;
-      updateSlide();
-    }
+    zoomSlider.addEventListener('input', () => {
+      const zoom = zoomSlider.value / 100;
+      images.forEach(img => {
+        img.style.transform = `scale(${zoom})`;
+      });
+    });
   </script>
 
 </body>
