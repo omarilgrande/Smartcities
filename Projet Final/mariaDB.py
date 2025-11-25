@@ -7,7 +7,7 @@ import paho.mqtt.client as client
 from datetime import datetime
 import time
 
-engine = create_engine("mariadb+mariadbconnector://martin:123456@192.168.2.35:3306/RPG", echo=True)
+engine = create_engine("mariadb+mariadbconnector://martin:1234@192.168.2.45:3306/RPG", echo=True)
 Session = sessionmaker(bind=engine)
 
 
