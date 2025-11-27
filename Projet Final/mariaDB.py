@@ -104,7 +104,6 @@ def fctTopicTemperature(ud, c, m):
 
 
 def fctTopicImage(ud, c, m):
-    
     global id_im, image_chunks, nom_image_courante, image_en_reception
 
     topic = m.topic
@@ -117,11 +116,11 @@ def fctTopicImage(ud, c, m):
         image_en_reception = True
         print(f"Début réception de {nom_image_courante}")
 
-    # Morceau intermédiaire avec index
+    # Réception d'un morceau avec index
     elif topic == "B3/MartinOmar/image/data":
         try:
             message = payload.decode()
-            # Découper en "index|base64data"
+            # Découper le message en "index|base64data"
             index_str, chunk_b64 = message.split("|", 1)
             index = int(index_str)
             image_chunks[index] = base64.b64decode(chunk_b64)
@@ -132,21 +131,33 @@ def fctTopicImage(ud, c, m):
     # Fin de la transmission
     elif topic == "B3/MartinOmar/image/end" and image_en_reception:
         id_im += 1
+
+        # Créer le dossier de destination s'il n'existe pas
         dossier_destination = r"C:\Users\UItilisateur\Desktop\BAc 3\Smartcities\ImagesRecues"
         os.makedirs(dossier_destination, exist_ok=True)
-        chemin_complet = os.path.join(dossier_destination, nom_image_courante)
 
-        # Réassembler les morceaux dans l'ordre
+        # 🔹 Générer un nom d'image unique (avec horodatage précis)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        nom_fichier_unique = f"image_{timestamp}.jpg"
+        chemin_complet = os.path.join(dossier_destination, nom_fichier_unique)
+
         try:
+            # Réassembler les morceaux dans le bon ordre
             image_finale = b"".join(image_chunks[i] for i in sorted(image_chunks.keys()))
+
+            # Écrire l'image sur le disque
             with open(chemin_complet, "wb") as f:
                 f.write(image_finale)
 
             print(f"Image terminée : {chemin_complet} ({len(image_finale)} octets)")
 
-            # Enregistrer dans la base MariaDB
+            # Enregistrer le chemin et la date dans la base MariaDB
             session = Session()
-            monImage = Image(idi=id_im, path=chemin_complet, date=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            monImage = Image(
+                idi=id_im,
+                path=chemin_complet,
+                date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            )
             session.add(monImage)
             session.commit()
             session.close()
@@ -154,13 +165,14 @@ def fctTopicImage(ud, c, m):
         except Exception as e:
             print("Erreur lors de la reconstruction :", e)
 
-        # Réinitialiser
+        # 🔁 Réinitialiser les variables pour la prochaine image
         image_chunks = {}
         nom_image_courante = None
         image_en_reception = False
 
     else:
         print("Paquet reçu hors contexte image.")
+
 
 
 
@@ -184,6 +196,7 @@ cli.loop_start()
 
 while True:
     print("Je suis dans ma boucle")
+    envoyerParametresVersESP32()
     time.sleep(5)
 
 cli.loop_stop()
