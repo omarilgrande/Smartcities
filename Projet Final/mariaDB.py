@@ -165,7 +165,7 @@ def fctTopicImage(ud, c, m):
         except Exception as e:
             print("Erreur lors de la reconstruction :", e)
 
-        # 🔁 Réinitialiser les variables pour la prochaine image
+        # Réinitialiser les variables pour la prochaine image
         image_chunks = {}
         nom_image_courante = None
         image_en_reception = False
