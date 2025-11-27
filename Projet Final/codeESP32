@@ -1,0 +1,302 @@
+/********* DEPENDANCES *********/
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include "esp_camera.h"
+#include "mbedtls/base64.h"     // pour encoder en Base64
+#include <Preferences.h>        // pour mémoriser SSID/password si tu veux
+
+/********* CONFIG BROKER / TOPICS *********/
+const char* MQTT_HOST = "192.168.2.35";
+const uint16_t MQTT_PORT = 1883;
+
+const char* TOPIC_WIFI_SSID   = "B3/MartinOmar/parametre/wifi/ssid";
+const char* TOPIC_WIFI_PWD    = "B3/MartinOmar/parametre/wifi/password";
+const char* TOPIC_CAM_BASE    = "B3/MartinOmar/parametre/camera/"; // …/resolution, …/brightness, etc.
+const char* TOPIC_CMD_CAPTURE = "B3/MartinOmar/commande/capture";
+
+const char* TOPIC_IMG_START   = "B3/MartinOmar/image/start";
+const char* TOPIC_IMG_DATA    = "B3/MartinOmar/image/data";
+const char* TOPIC_IMG_END     = "B3/MartinOmar/image/end";
+
+const char* TOPIC_TEMP        = "B3/MartinOmar/parametre/temperature";
+const char* TOPIC_BAT         = "B3/MartinOmar/parametre/battrie";
+
+/********* CONFIG WIFI (valeurs par défaut, surchargées par MQTT) *********/
+String WIFI_SSID = "TonSSID";
+String WIFI_PWD  = "TonMotDePasse";
+
+/********* MQTT *********/
+WiFiClient espClient;
+PubSubClient mqtt(espClient);
+
+/********* STORAGE *********/
+Preferences prefs;
+
+/********* CAMERA PINS (AI-Thinker ESP32-CAM) *********/
+#define PWDN_GPIO_NUM     32
+#define RESET_GPIO_NUM    -1
+#define XCLK_GPIO_NUM      0
+#define SIOD_GPIO_NUM     26
+#define SIOC_GPIO_NUM     27
+
+#define Y9_GPIO_NUM       35
+#define Y8_GPIO_NUM       34
+#define Y7_GPIO_NUM       39
+#define Y6_GPIO_NUM       36
+#define Y5_GPIO_NUM       21
+#define Y4_GPIO_NUM       19
+#define Y3_GPIO_NUM       18
+#define Y2_GPIO_NUM        5
+#define VSYNC_GPIO_NUM    25
+#define HREF_GPIO_NUM     23
+#define PCLK_GPIO_NUM     22
+
+/********* ETAT PARAMS CAMERA *********/
+struct {
+  String resolution = "640x480";  // VGA
+  int8_t brightness = 0;          // -2..2
+  int8_t contrast   = 0;          // -2..2
+  int8_t saturation = 0;          // -2..2
+  int   quality     = 30;         // 10..63 (plus grand = plus compressé)
+  bool  mirror      = false;
+  bool  flip        = false;
+} camCfg;
+
+/********* HELPERS *********/
+void applyCameraSettings() {
+  sensor_t * s = esp_camera_sensor_get();
+  if(!s) return;
+
+  // Résolution
+  if      (camCfg.resolution == "320x240")  s->set_framesize(s, FRAMESIZE_QVGA);
+  else if (camCfg.resolution == "640x480")  s->set_framesize(s, FRAMESIZE_VGA);
+  else if (camCfg.resolution == "800x600")  s->set_framesize(s, FRAMESIZE_SVGA);
+  else if (camCfg.resolution == "1024x768") s->set_framesize(s, FRAMESIZE_XGA);
+  else if (camCfg.resolution == "1280x1024")s->set_framesize(s, FRAMESIZE_SXGA);
+  else if (camCfg.resolution == "1600x1200")s->set_framesize(s, FRAMESIZE_UXGA);
+
+  // Autres réglages
+  s->set_brightness(s, camCfg.brightness);
+  s->set_contrast  (s, camCfg.contrast);
+  s->set_saturation(s, camCfg.saturation);
+  s->set_quality   (s, camCfg.quality);
+  s->set_hmirror   (s, camCfg.mirror);
+  s->set_vflip     (s, camCfg.flip);
+}
+
+bool connectWiFi() {
+  Serial.printf("Connexion WiFi à %s ...\n", WIFI_SSID.c_str());
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID.c_str(), WIFI_PWD.c_str());
+  uint32_t t0 = millis();
+  while (WiFi.status() != WL_CONNECTED && millis()-t0 < 20000) {
+    delay(300);
+    Serial.print(".");
+  }
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.printf("\n✅ WiFi connecté : %s  IP=%s\n", WIFI_SSID.c_str(), WiFi.localIP().toString().c_str());
+    return true;
+  } else {
+    Serial.println("\n❌ WiFi non connecté");
+    return false;
+  }
+}
+
+void reconnectMQTT() {
+  while (!mqtt.connected()) {
+    Serial.print("Connexion MQTT...");
+    if (mqtt.connect("ESP32-CAM")) {
+      Serial.println("OK");
+      // s'abonner à tous les paramètres
+      mqtt.subscribe(TOPIC_CMD_CAPTURE);
+      mqtt.subscribe("B3/MartinOmar/parametre/wifi/#");
+      mqtt.subscribe("B3/MartinOmar/parametre/camera/#");
+    } else {
+      Serial.printf("échec (%d), retry...\n", mqtt.state());
+      delay(2000);
+    }
+  }
+}
+
+/********* ENCODE BASE64 UTIL *********/
+String base64Encode(const uint8_t* data, size_t len) {
+  size_t out_len = 0;
+  // calc taille
+  mbedtls_base64_encode(nullptr, 0, &out_len, data, len);
+  String out; out.reserve(out_len + 1);
+  out.resize(out_len);
+  if (mbedtls_base64_encode((unsigned char*)out.begin(), out_len, &out_len,
+                            data, len) == 0) {
+    out.resize(out_len);
+    return out;
+  }
+  return String();
+}
+
+/********* PUB IMAGE EN MORCEAUX INDEXES *********/
+void publishImageChunks(camera_fb_t* fb) {
+  // 1) START
+  String filename = "image_" + String((uint32_t)millis()) + ".jpg";
+  mqtt.publish(TOPIC_IMG_START, filename.c_str());
+
+  // 2) DATA (index|base64)
+  const size_t BIN_CHUNK = 2048;     // morceau binaire → ~ 2736 base64, ok si buffer MQTT augmenté
+  static char line[16];              // pour "index|"
+  int index = 0;
+
+  for (size_t offset = 0; offset < fb->len; offset += BIN_CHUNK, index++) {
+    size_t thisLen = min(BIN_CHUNK, fb->len - offset);
+    String b64 = base64Encode(fb->buf + offset, thisLen);
+
+    // compose "index|base64"
+    String payload;
+    snprintf(line, sizeof(line), "%d|", index);
+    payload.reserve(strlen(line) + b64.length());
+    payload += line;
+    payload += b64;
+
+    mqtt.publish(TOPIC_IMG_DATA, payload.c_str()); // QoS0 (PubSubClient)
+    delay(50); // laisse respirer le broker + le recepteur
+  }
+
+  // 3) END
+  mqtt.publish(TOPIC_IMG_END, "END");
+}
+
+/********* CAPTURE + ENVOI *********/
+void takePictureAndSend() {
+  camera_fb_t * fb = esp_camera_fb_get();
+  if (!fb) {
+    Serial.println("❌ Capture échouée");
+    return;
+  }
+  Serial.printf("📸 Photo %u bytes — envoi MQTT...\n", fb->len);
+  publishImageChunks(fb);
+  esp_camera_fb_return(fb);
+}
+
+/********* CALLBACK MQTT (reception params) *********/
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  String t = String(topic);
+  String msg; msg.reserve(length+1);
+  for (unsigned int i=0; i<length; ++i) msg += (char)payload[i];
+
+  Serial.printf("📥 %s → %s\n", topic, msg.c_str());
+
+  // WIFI
+  if (t == TOPIC_WIFI_SSID) {
+    WIFI_SSID = msg;
+    prefs.begin("wifi", false);
+    prefs.putString("ssid", WIFI_SSID);
+    prefs.end();
+    Serial.println("SSID mis à jour (stocké)");
+  } else if (t == TOPIC_WIFI_PWD) {
+    WIFI_PWD = msg;
+    prefs.begin("wifi", false);
+    prefs.putString("pwd", WIFI_PWD);
+    prefs.end();
+    Serial.println("Password mis à jour (stocké)");
+  }
+
+  // CAMERA
+  else if (t == String(TOPIC_CAM_BASE) + "resolution") {
+    camCfg.resolution = msg;
+    applyCameraSettings();
+  } else if (t == String(TOPIC_CAM_BASE) + "brightness") {
+    camCfg.brightness = msg.toInt(); applyCameraSettings();
+  } else if (t == String(TOPIC_CAM_BASE) + "contrast") {
+    camCfg.contrast = msg.toInt();   applyCameraSettings();
+  } else if (t == String(TOPIC_CAM_BASE) + "saturation") {
+    camCfg.saturation = msg.toInt(); applyCameraSettings();
+  } else if (t == String(TOPIC_CAM_BASE) + "quality") {
+    camCfg.quality = msg.toInt();    applyCameraSettings();
+  } else if (t == String(TOPIC_CAM_BASE) + "mirror") {
+    camCfg.mirror = (msg == "on");   applyCameraSettings();
+  } else if (t == String(TOPIC_CAM_BASE) + "flip") {
+    camCfg.flip = (msg == "on");     applyCameraSettings();
+  }
+
+  // COMMANDE
+  else if (t == TOPIC_CMD_CAPTURE && msg == "photo") {
+    takePictureAndSend();
+  }
+}
+
+/********* INIT CAMERA *********/
+bool initCamera() {
+  camera_config_t config;
+  config.ledc_channel = LEDC_CHANNEL_0;
+  config.ledc_timer   = LEDC_TIMER_0;
+  config.pin_d0       = Y2_GPIO_NUM;
+  config.pin_d1       = Y3_GPIO_NUM;
+  config.pin_d2       = Y4_GPIO_NUM;
+  config.pin_d3       = Y5_GPIO_NUM;
+  config.pin_d4       = Y6_GPIO_NUM;
+  config.pin_d5       = Y7_GPIO_NUM;
+  config.pin_d6       = Y8_GPIO_NUM;
+  config.pin_d7       = Y9_GPIO_NUM;
+  config.pin_xclk     = XCLK_GPIO_NUM;
+  config.pin_pclk     = PCLK_GPIO_NUM;
+  config.pin_vsync    = VSYNC_GPIO_NUM;
+  config.pin_href     = HREF_GPIO_NUM;
+  config.pin_sscb_sda = SIOD_GPIO_NUM;
+  config.pin_sscb_scl = SIOC_GPIO_NUM;
+  config.pin_pwdn     = PWDN_GPIO_NUM;
+  config.pin_reset    = RESET_GPIO_NUM;
+  config.xclk_freq_hz = 20000000;
+  config.pixel_format = PIXFORMAT_JPEG;
+  // Résolution initiale → VGA
+  config.frame_size   = FRAMESIZE_VGA;
+  config.jpeg_quality = 30;   // 10..63
+  config.fb_count     = 1;
+
+  esp_err_t err = esp_camera_init(&config);
+  if (err != ESP_OK) {
+    Serial.printf("Camera init failed 0x%x\n", err);
+    return false;
+  }
+  applyCameraSettings();
+  return true;
+}
+
+/********* SETUP *********/
+void setup() {
+  Serial.begin(115200);
+  delay(100);
+
+  // Charger creds stockés (si existants)
+  prefs.begin("wifi", true);
+  String ss = prefs.getString("ssid", WIFI_SSID);
+  String pw = prefs.getString("pwd",  WIFI_PWD);
+  prefs.end();
+  WIFI_SSID = ss; WIFI_PWD = pw;
+
+  if (!connectWiFi()) {
+    // continue quand même, tu pourras pousser SSID/PWD via MQTT si tu es déjà sur un WiFi connu
+  }
+
+  if (!initCamera()) {
+    Serial.println("Impossible d'initialiser la caméra.");
+  }
+
+  mqtt.setServer(MQTT_HOST, MQTT_PORT);
+  mqtt.setCallback(mqttCallback);
+
+  // IMPORTANT : buffer MQTT (par défaut 256). On augmente pour les gros payloads base64.
+  mqtt.setBufferSize(8192);
+}
+
+/********* LOOP *********/
+uint32_t lastTel = 0;
+void loop() {
+  if (WiFi.status() != WL_CONNECTED) connectWiFi();
+  if (!mqtt.connected()) reconnectMQTT();
+  mqtt.loop();
+
+  // Exemple de télémétrie périodique (temp / batterie)
+  if (millis() - lastTel > 10000) {
+    lastTel = millis();
+    mqtt.publish(TOPIC_TEMP, "24.2");    // remplace par ta vraie valeur
+    mqtt.publish(TOPIC_BAT,  "87");      // remplace par ta vraie valeur %
+  }
+}
