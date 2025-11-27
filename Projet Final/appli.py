@@ -5,8 +5,17 @@
 
 from flask import Flask, render_template, request, redirect, url_for
 import os
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from TablesMariaDB import CamParam, Wifi
+from datetime import datetime
 
 app = Flask(__name__)
+
+engine = create_engine("mariadb+mariadbconnector://martin:1234@192.168.2.45:3306/RPG", echo=True)
+Session = sessionmaker(bind=engine)
+id_param = 0
+id_wifi = 0
 
 # ============================
 # PAGE PRINCIPALE "/"
@@ -27,10 +36,13 @@ def index():
 @app.route('/update_params', methods=['POST'])
 def update_params():
     # Paramètres Wi-Fi
+    global id_param, id_wifi
+    id_wifi += 1
     ssid = request.form.get('ssid')
     password = request.form.get('password')
 
-    # Paramètres caméra
+    # Paramètres
+    id_param += 1
     resolution = request.form.get('resolution')
     brightness = request.form.get('brightness')
     contrast = request.form.get('contrast')
@@ -39,17 +51,31 @@ def update_params():
     mirror = request.form.get('mirror')
     flip = request.form.get('flip')
 
-    print("=== PARAMÈTRES REÇUS ===")
-    print(f"Wi-Fi SSID : {ssid}")
-    print(f"Wi-Fi Mot de passe : {password}")
-    print(f"Résolution : {resolution}")
-    print(f"Luminosité : {brightness}")
-    print(f"Contraste : {contrast}")
-    print(f"Saturation : {saturation}")
-    print(f"Qualité JPEG : {quality}")
-    print(f"Miroir : {mirror}")
-    print(f"Rotation : {flip}")
-    print("=========================")
+    session = Session()
+    new_param = CamParam(
+        id=id_param,
+        resolution=resolution,
+        brightness=int(brightness),
+        contrast=int(contrast),
+        saturation=int(saturation),
+        quality=int(quality),
+        mirror=mirror,
+        flip=flip,
+        date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    )
+
+    session.add(new_param)
+    session.commit()
+
+    new_param_wifi = Wifi(
+        id=id_wifi,
+        ssid=ssid,
+        pasword=password,
+        date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    )
+
+    session.add(new_param_wifi)
+    session.commit()
 
     # Exemple d’envoi vers l’ESP32 (à activer plus tard)
     # import requests
@@ -57,6 +83,8 @@ def update_params():
     # requests.post(esp32_url, data=request.form)
 
     return redirect(url_for('index'))
+
+
 
 if __name__ == "__main__":
     app.run(debug=True)
