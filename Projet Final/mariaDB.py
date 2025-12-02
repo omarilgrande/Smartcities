@@ -132,7 +132,7 @@ def fctTopicImage(ud, c, m):
     elif topic == "B3/MartinOmar/image/end" and image_en_reception:
         id_im += 1
 
-        # Créer le dossier de destination s'il n'existe pas
+        # Créer le dossier de destination s'il n'existe pas!!!!
         dossier_destination = r"C:\Users\UItilisateur\Desktop\BAc 3\Smartcities\ImagesRecues"
         os.makedirs(dossier_destination, exist_ok=True)
 
