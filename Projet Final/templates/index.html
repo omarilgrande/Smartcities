@@ -13,12 +13,25 @@
   <div class="w-80 bg-slate-800 text-white flex flex-col p-6 space-y-5 h-full overflow-y-auto">
     <h2 class="text-xl font-bold mb-2">ESP32 Dashboard</h2>
 
+    <div class="mb-4">
+        <label class="text-xs text-gray-400">CamÃ©ra affichÃ©e :</label>
+        <form action="/" method="GET">
+            <select name="cam_id" onchange="this.form.submit()" class="w-full p-2 rounded text-black text-sm font-bold bg-yellow-100 border border-yellow-300">
+                {% for cam in cameras %}
+                <option value="{{ cam.id }}" {% if selected_cam and selected_cam.id == cam.id %}selected{% endif %}>
+                    {{ cam.Nom }} (ID: {{ cam.id }})
+                </option>
+                {% endfor %}
+            </select>
+        </form>
+    </div>
+
     <div class="flex flex-col gap-2 border-b border-slate-600 pb-4">
         <button onclick="showTab('gallery')" id="btn-gallery" class="bg-blue-600 text-white p-2 rounded text-left font-semibold hover:bg-blue-500 transition">
-            🖼️ Galerie Images
+            Galerie Images
         </button>
         <button onclick="showTab('stats')" id="btn-stats" class="bg-slate-700 text-gray-300 p-2 rounded text-left font-semibold hover:bg-blue-500 hover:text-white transition">
-            📈 Graphiques Batterie
+            Graphiques Batterie
         </button>
     </div>
 
@@ -29,9 +42,15 @@
       <input type="text" name="ssid" class="p-2 rounded text-black text-sm" placeholder="SSID">
       <input type="password" name="password" class="p-2 rounded text-black text-sm" placeholder="Mot de passe">
 
-      <h3 class="text-sm font-semibold text-gray-400 mt-2">Caméra</h3>
+      <h3 class="text-sm font-semibold text-gray-400 mt-2">Camera</h3>
       
-      <label class="text-xs">Résolution</label>
+      <label class="text-xs">Source Camera</label>
+      <select name="cam_id" class="p-2 rounded text-black text-sm mb-2">
+        <option value="0">Camera Principale (0)</option>
+        <option value="1">Camera Secondaire (1)</option>
+      </select>
+      
+      <label class="text-xs">Resolution</label>
       <select name="resolution" class="p-2 rounded text-black text-sm">
         <option value="QVGA (320x240)">QVGA (320x240)</option>
         <option value="VGA (640x480)">VGA (640x480)</option>
@@ -40,14 +59,14 @@
         <option value="UXGA (1600x1200)">UXGA (1600x1200)</option>
       </select>
 
-      <label class="text-xs">Luminosité / Contraste / Saturation</label>
+      <label class="text-xs">Luminosite / Contraste / Saturation</label>
       <div class="grid grid-cols-3 gap-2">
-          <input type="range" name="brightness" min="-2" max="2" value="0" title="Luminosité">
+          <input type="range" name="brightness" min="-2" max="2" value="0" title="Luminosite">
           <input type="range" name="contrast" min="-2" max="2" value="0" title="Contraste">
           <input type="range" name="saturation" min="-2" max="2" value="0" title="Saturation">
       </div>
 
-      <label class="text-xs">Qualité (0-63)</label>
+      <label class="text-xs">Qualite (0-63)</label>
       <input type="number" name="quality" min="0" max="63" value="10" class="p-2 rounded text-black text-sm">
 
       <div class="flex items-center space-x-2 mt-2">
@@ -65,33 +84,34 @@
 
   <div class="flex-1 overflow-y-auto p-6 relative">
 
-    <div id="tab-gallery">
-        <h1 class="text-2xl font-semibold mb-4 text-gray-800">Images capturées</h1>
-        
-        <form method="GET" action="/search" class="flex flex-wrap items-end gap-4 mb-6 bg-white p-4 rounded-lg shadow">
-            <div class="flex flex-col">
-                <label for="start_date" class="text-sm font-semibold text-gray-700">Début</label>
-                <input type="date" id="start_date" name="start_date" class="p-2 border rounded text-gray-700">
-            </div>
-            <div class="flex flex-col">
-                <label for="end_date" class="text-sm font-semibold text-gray-700">Fin</label>
-                <input type="date" id="end_date" name="end_date" class="p-2 border rounded text-gray-700">
-            </div>
-            <button type="submit" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded font-semibold">
-                Filtrer
-            </button>
-        </form>
+  <div id="tab-gallery" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+    {% for img in images %}
+    <div class="bg-white rounded-lg shadow-md p-2 relative group">
+    
+      <div class="flex items-center justify-center h-60 bg-gray-100 rounded overflow-hidden">
+        <img src="{{ url_for('static', filename=img.url) }}" class="object-contain max-h-full">
+      </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {% for img in images %}
-          <div class="bg-white rounded-lg shadow-md p-2 flex items-center justify-center">
-            <img src="{{ url_for('static', filename=img) }}" class="rounded max-h-60 object-contain hover:scale-105 transition-transform duration-200">
-          </div>
-          {% else %}
-          <p class="text-gray-500">Aucune image trouvée.</p>
-          {% endfor %}
-        </div>
+      <div class="mt-2 text-xs text-gray-500 text-center">
+        {{ img.date }}
+        
+      </div>
+
+      <form action="/delete_image/{{ img.id }}" method="POST" onsubmit="return confirm('Voulez-vous vraiment supprimer cette image ?');">
+          <button type="submit" 
+                  class="absolute top-2 right-2 bg-red-600 text-white p-2 rounded-full opacity-0 group-hover:opacity-100 transition shadow hover:bg-red-700"
+                  title="Supprimer l'image">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+          </button>
+      </form>
+
     </div>
+    {% else %}
+    <p class="text-gray-500 col-span-3 text-center">Aucune image trouvee.</p>
+    {% endfor %}
+  </div>
 
     <div id="tab-stats" class="hidden">
         <h1 class="text-2xl font-semibold mb-6 text-gray-800">Suivi de la Batterie</h1>
@@ -146,7 +166,7 @@
 
     // --- 2. CONFIGURATION DES GRAPHIQUES ---
     
-    // Récupération des données injectées par Flask (safe filter est crucial)
+    // RÃƒÂ©cupÃƒÂ©ration des donnÃƒÂ©es injectÃƒÂ©es par Flask (safe filter est crucial)
     const labelsData = {{ dates_json | safe }};
     const levelData = {{ levels_json | safe }};
     const voltageData = {{ voltages_json | safe }};
