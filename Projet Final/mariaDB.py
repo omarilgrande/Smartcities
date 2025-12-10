@@ -1,192 +1,228 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from TablesMariaDB import Image, Battrie, Wifi, CamParametre
-import tkinter as tk
-from tkinter import ttk
+from TablesMariaDB import Image, Battrie, Wifi, CamParametre, Camera
 import paho.mqtt.client as client
 from datetime import datetime
 import time
 import os
 import base64
 
-print(">>> Classe Image chargee depuis :", Image.__module__)
-print(">>> Colonnes :", [c.key for c in Image.__table__.columns])
-
+# Configuration BDD
 engine = create_engine("mariadb+mariadbconnector://martin:1234@192.168.2.58:3306/RPG", echo=True)
 Session = sessionmaker(bind=engine)
-session = Session()
-id_bat = session.query(Battrie.id).order_by(Battrie.id.desc()).first()
-session.close()
-update=False
 
-# Variables pour la reconstruction d'image
-image_chunks = []          
+# Dictionnaires pour gÃ©rer plusieurs camÃ©ras en mÃªme temps
+# Structure : { camera_id : [chunk1, chunk2, ...] }
+buffers_images = {} 
+noms_images = {}
+
+# Variables globales config
 dernier_wifi = {}
 dernier_cam = {}
-nom_image_courante = None
-image_en_reception = False   
+update = False
 
-def envoyerParametresVersESP32():
+def on_message(client, userdata, message):
+    try:
+        topic = message.topic
+        parts = topic.split('/')
+        
+        # On verifie si c'est un format valide avec un ID numerique
+        # Ex: B3/MartinOmar/1/...
+        if len(parts) >= 3 and parts[2].isdigit():
+            cam_id = int(parts[2])
+            
+            # Verification eclair en BDD pour voir si la camera existe
+            session = Session()
+            exists = session.query(Camera).filter_by(id=cam_id).first()
+            if not exists:
+                print(f"--- NOUVELLE CAMERA DETECTEE : {cam_id} ---")
+                new_cam = Camera(id=cam_id, nom=f"ESP32-CAM {cam_id}", description="Auto-detect MQTT")
+                session.add(new_cam)
+                session.commit()
+            session.close()
+            
+    except Exception as e:
+        print(f"Erreur detection auto: {e}")
+
+def envoyerParametresVersESP32(cli,cam_id):
     global dernier_wifi, dernier_cam
     session = Session()
 
-    # RÃ©cupÃ©rer les derniers paramÃ¨tres Wi-Fi
-    wifi = session.query(Wifi).order_by(Wifi.id.desc()).first()
-    if wifi:
-        data_wifi = {
-            "ssid": wifi.ssid,
-            "password": wifi.pasword
-        }
-        if data_wifi != dernier_wifi:
-            print("Envoi des paramÃ¨tres Wi-Fi :")
-            cli.publish("B3/MartinOmar/parametre/wifi/ssid", str(wifi.ssid))
-            print(f"ssid = {wifi.ssid}")
-            cli.publish("B3/MartinOmar/parametre/wifi/password", str(wifi.pasword))
-            print(f"password = {wifi.pasword}")
-            dernier_wifi = data_wifi.copy()
-    else:
-        print("Aucun paramÃ¨tre Wi-Fi trouvÃ© en base.")
-
-    # RÃ©cupÃ©rer les derniers paramÃ¨tres camÃ©ra
-    cam = session.query(CamParametre).order_by(CamParametre.id.desc()).first()
-    if cam:
-        data_cam = {
-            "resolution": cam.resolution,
-            "brightness": cam.brightness,
-            "contrast": cam.contrast,
-            "saturation": cam.saturation,
-            "quality": cam.quality,
-            "mirror": cam.mirror,
-            "flip": cam.flip
-        }
-        if data_cam != dernier_cam:
-            print("\nEnvoi des paramÃ¨tres camÃ©ra :")
-            cli.publish("B3/MartinOmar/parametre/camera/resolution", str(cam.resolution))
-            cli.publish("B3/MartinOmar/parametre/camera/brightness", str(cam.brightness))
-            cli.publish("B3/MartinOmar/parametre/camera/contrast", str(cam.contrast))
-            cli.publish("B3/MartinOmar/parametre/camera/saturation", str(cam.saturation))
-            cli.publish("B3/MartinOmar/parametre/camera/quality", str(cam.quality))
-            cli.publish("B3/MartinOmar/parametre/camera/mirror", str(cam.mirror))
-            cli.publish("B3/MartinOmar/parametre/camera/flip", str(cam.flip))
-            print("ParamÃ¨tres camÃ©ra envoyÃ©s.")
-            dernier_cam = data_cam.copy()
-    else:
-        print("Aucun paramÃ¨tre camÃ©ra trouvÃ© en base.")
-
-    session.close()
-
-# Callbacks MQTT
-def fctTopicBattrie(ud, c, m):
-    global id_bat
-    id_bat = request.form.get("id_im", 0)  # valeur par defaut 0
-    try:
-        id_bat = int(id_bat)
-    except ValueError:
-        id_bat = 0  # securite si la valeur n'est pas un nombre
-    id_bat += 1
-    pourc = m.payload.decode()
-    date_reception = datetime.now()
-
-    session = Session()
-    maBattrie = Battrie(idb=id_bat, poucentage=pourc, date=date_reception)
-    session.add(maBattrie)
-    session.commit()
-    session.close()
-
-    print(f"Batterie: {m.payload.decode()}")
-
-
-def fctTopicImage(ud, c, m):
-    global id_im, image_chunks, nom_image_courante, image_en_reception
-
-    topic = m.topic
-    payload = m.payload
-
-    if topic == "B3/MartinOmar/image/start":
-        nom_image_courante = payload.decode().strip()
-        image_chunks = []
-        image_en_reception = True
-        print(f"Debut reception de {nom_image_courante}")
-
-    elif topic == "B3/MartinOmar/image/data":
-        try:
-            image_chunks.append(payload.decode())
-            print(f"Morceau recu ({len(payload)} octets)")
-        except Exception as e:
-            print("Erreur lors du traitement d'un morceau :", e)
-
-    elif topic == "B3/MartinOmar/image/end" and image_en_reception:
-        session = Session()
-        last = session.query(Image.idi).order_by(Image.idi.desc()).first()
-        id_im = (last[0] if last else 0) + 1
-
-        dossier_destination = r"/home/martin/Desktop/smartcities/static/images"
-        os.makedirs(dossier_destination, exist_ok=True)
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        nom_fichier_unique = f"image_{timestamp}.jpg"
-        chemin_complet = os.path.join(dossier_destination, nom_fichier_unique)
-
-        try:
-            image_finale = base64.b64decode("".join(image_chunks))
-            with open(chemin_complet, "wb") as f:
-                f.write(image_finale)
-
-            print(f"Image terminee : {chemin_complet} ({len(image_finale)} octets)")
-
-            monImage = Image(
-                idi=id_im,
-                path=chemin_complet,
-                date=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            )
-            session.add(monImage)
-            session.commit()
-
-        except Exception as e:
-            print("Erreur lors de la reconstruction :", e)
-        finally:
-            session.close()
-            image_chunks = []
-            nom_image_courante = None
-            image_en_reception = False
-
-    else:
-        print("Paquet recu hors contexte image.")
-
+    cam_param = session.query(CamParametre)\
+        .filter(CamParametre.NumeroCam == cam_id)\
+        .order_by(CamParametre.id.desc())\
+        .first()
         
-def fctTopicUpdate(ud, c, m):
-    global update
+    session.close()
 
-    topic = m.topic
-    payload = m.payload
-    if topic == "B3/MartinOmar/parametre/camera/update":update=True
+    if cam_param:
+        print(f"[Cam {cam_id}] Envoi des parametres...")
+        # 2. On construit le topic AVEC L'ID
+        base_topic = f"B3/MartinOmar/{cam_id}/parametre/camera"
+        
+        cli.publish(f"{base_topic}/resolution", str(cam_param.resolution))
+        cli.publish(f"{base_topic}/quality", str(cam_param.quality))
+        cli.publish(f"{base_topic}/contrast", str(cam_param.contrast))
+        cli.publish(f"{base_topic}/brightness", str(cam_param.brightness))
+        cli.publish(f"{base_topic}/saturation", str(cam_param.saturation))
+        # Ajouter les autres (flip, mirror...)
+        
+    else:
+        print(f"[Cam {cam_id}] Pas de parametres trouves en BDD.")
+
+# --- CALLBACKS MQTT ---
+
+def fctTopicBattrie(client, userdata, message):
+    try:
+        topic = message.topic
+        payload = message.payload.decode()
+        
+        # 1. Extraction de l'ID de la camÃ©ra depuis le topic
+        # Ex: B3/MartinOmar/1/parametre/battrie/level
+        parts = topic.split('/')
+        if len(parts) < 3 or not parts[2].isdigit():
+            return # Topic invalide
+            
+        cam_id = int(parts[2]) 
+        
+        pourc = 0
+        volt = 0.0
+
+        # On traite selon le type de message
+        if "level" in topic:
+            pourc = int(float(payload)) # Conversion safe
+            print(f"[Cam {cam_id}] Batterie Level: {pourc}%")
+        elif "tension" in topic:
+            volt = float(payload)
+            print(f"[Cam {cam_id}] Tension: {volt}V")
+
+        # Enregistrement en BDD
+        # Note: IdÃ©alement, il faudrait grouper level et tension, 
+        # mais ici on insÃ¨re dÃ¨s qu'on reÃ§oit une info pour simplifier.
+        session = Session()
+        maBattrie = Battrie(
+            NumeroCam=cam_id,  # AJOUT IMPORTANT : On lie Ã  la camÃ©ra
+            poucentage=pourc,
+            voltage=volt,
+            date=datetime.now()
+        )
+        session.add(maBattrie)
+        session.commit()
+        session.close()
+
+    except Exception as e:
+        print(f"Erreur Batterie: {e}")
 
 
+def fctTopicImage(client, userdata, message):
+    global buffers_images, noms_images
 
-# Connexion MQTT
-cli = client.Client()
+    topic = message.topic
+    
+    # 1. Extraction ID Camera
+    parts = topic.split('/')
+    if len(parts) < 3 or not parts[2].isdigit():
+        return
+    cam_id = int(parts[2])
+
+    if "start" in topic:
+        # Le nom du fichier est du texte, on le decode
+        nom_fic = message.payload.decode().strip()
+        buffers_images[cam_id] = [] 
+        noms_images[cam_id] = nom_fic
+        print(f"[Cam {cam_id}] Debut reception (Binaire) : {nom_fic}")
+
+    elif "data" in topic:
+        # MODIFICATION 1 : On ajoute les BYTES bruts, on ne decode PAS en string
+        if cam_id in buffers_images:
+            buffers_images[cam_id].append(message.payload) 
+            # message.payload est deja en type 'bytes'
+
+    elif "end" in topic:
+        if cam_id in buffers_images and len(buffers_images[cam_id]) > 0:
+            print(f"\n[Cam {cam_id}] Fin reception. Reconstruction...")
+            
+            try:
+                # MODIFICATION 2 : On joint les morceaux binaires avec b"" (bytes vide)
+                # Au lieu de "".join(...) qui est pour du texte
+                image_bytes = b"".join(buffers_images[cam_id])
+                
+                # MODIFICATION 3 : Suppression de base64.b64decode()
+                # Les donnees sont deja l'image pure.
+                
+                # Chemin
+                dossier = r"/home/martin/Desktop/smartcities/static/images"
+                os.makedirs(dossier, exist_ok=True)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                nom_final = f"cam{cam_id}_{timestamp}.jpg"
+                chemin_complet = os.path.join(dossier, nom_final)
+
+                # ecriture disque (wb = write bytes)
+                with open(chemin_complet, "wb") as f:
+                    f.write(image_bytes)
+                
+                # ecriture BDD
+                session = Session()
+                nouvelle_image = Image(
+                    NumeroCam=cam_id,
+                    path=chemin_complet,
+                    date=datetime.now()
+                )
+                session.add(nouvelle_image)
+                session.commit()
+                session.close()
+                print(f"[Cam {cam_id}] Image sauvegardee : {nom_final}")
+
+            except Exception as e:
+                print(f"[Cam {cam_id}] Erreur reconstruction : {e}")
+            
+            # Nettoyage memoire pour cette camera
+            buffers_images[cam_id] = []
+            noms_images[cam_id] = None
+
+
+def fctTopicUpdate(client, userdata, message):
+    try:
+        topic = message.topic
+        parts = topic.split('/')
+        
+        if len(parts) >= 3 and parts[2].isdigit():
+            cam_id = int(parts[2])
+            print(f"Demande de mise a jour recue pour la Camera {cam_id}")
+            
+            # On declenche l'envoi immediatement pour cette camera
+            envoyerParametresVersESP32(client, cam_id)
+            
+    except Exception as e:
+        print(f"Erreur update: {e}")
+
+
+# --- CONFIGURATION MQTT ---
+cli = client.Client(client.CallbackAPIVersion.VERSION2)
+cli.on_message = on_message
 cli.connect("192.168.2.58", 1883)
 
-cli.subscribe("B3/MartinOmar/parametre/battrie")
-cli.subscribe("B3/MartinOmar/image/start")
-cli.subscribe("B3/MartinOmar/image/data", qos=1)  # QoS 1 : garantit la rÃ©ception
-cli.subscribe("B3/MartinOmar/image/end")
+# 1. Abonnements avec le Wildcard '+' pour l'ID
+# Ex: B3/MartinOmar/1/image/start
+cli.subscribe("B3/MartinOmar/+/parametre/battrie/#") # '#' attrape level et tension
+cli.subscribe("B3/MartinOmar/+/image/start")
+cli.subscribe("B3/MartinOmar/+/image/data", qos=1)
+cli.subscribe("B3/MartinOmar/+/image/end")
+cli.subscribe("B3/MartinOmar/parametre/camera/update") # Celui-ci peut rester global
 
-cli.message_callback_add("B3/MartinOmar/parametre/battrie", fctTopicBattrie)
-cli.message_callback_add("B3/MartinOmar/image/start", fctTopicImage)
-cli.message_callback_add("B3/MartinOmar/image/data", fctTopicImage)
-cli.message_callback_add("B3/MartinOmar/image/end", fctTopicImage)
+# 2. Ajout des callbacks AVEC le wildcard '+'
+# C'est ici que tu avais l'erreur principale
+cli.message_callback_add("B3/MartinOmar/+/parametre/battrie/#", fctTopicBattrie)
+cli.message_callback_add("B3/MartinOmar/+/image/start", fctTopicImage)
+cli.message_callback_add("B3/MartinOmar/+/image/data", fctTopicImage)
+cli.message_callback_add("B3/MartinOmar/+/image/end", fctTopicImage)
 cli.message_callback_add("B3/MartinOmar/parametre/camera/update", fctTopicUpdate)
 
-
+print("SystÃ¨me prÃªt. En attente de donnÃ©es...")
 cli.loop_start()
 
 while True:
-    print("Je suis dans ma boucle")
-    if update==True:
-        envoyerParametresVersESP32()
-        update=False
-    time.sleep(5)
-
-cli.loop_stop()
-
+    if update:
+        envoyerParametresVersESP32(cli)
+        update = False
+    time.sleep(1)
